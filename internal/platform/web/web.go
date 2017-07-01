@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/apex/log"
 	"github.com/dimfeld/httptreemux"
 	"github.com/pborman/uuid"
 	"gopkg.in/go-playground/validator.v8"
@@ -51,6 +52,7 @@ type Values struct {
 	TraceID    string
 	Now        time.Time
 	StatusCode int
+	Log        *log.Entry
 }
 
 // A Handler is a type that handles an http request within our own little mini
@@ -66,15 +68,17 @@ type Middleware func(Handler) Handler
 // data/logic on this App struct
 type App struct {
 	*httptreemux.TreeMux
-	mw []Middleware
+	mw  []Middleware
+	Log *log.Entry
 }
 
 // New creates an App value that handle a set of routes for the application.
 // You can provide any number of middleware and they'll be used to wrap every
 // request handler.
-func New(mw ...Middleware) *App {
+func New(log *log.Entry, mw ...Middleware) *App {
 	return &App{
 		TreeMux: httptreemux.New(),
+		Log:     log,
 		mw:      mw,
 	}
 }
@@ -116,6 +120,7 @@ func (a *App) Handle(verb, path string, handler Handler, mw ...Middleware) {
 		v := Values{
 			TraceID: uuid.New(),
 			Now:     time.Now(),
+			Log:     a.Log,
 		}
 		ctx = context.WithValue(ctx, KeyValues, &v)
 
@@ -125,7 +130,10 @@ func (a *App) Handle(verb, path string, handler Handler, mw ...Middleware) {
 		w.Header().Set(TraceIDHeader, v.TraceID)
 
 		// Call the wrapped handler functions.
-		handler(ctx, w, r, params)
+		if err := handler(ctx, w, r, params); err != nil {
+			a.Log.Errorf("Failed to call handler: %v", err)
+		}
+
 	}
 
 	// Add this handler for the specified verb and route.

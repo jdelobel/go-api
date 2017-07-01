@@ -9,24 +9,44 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-api/cmd/apid/handlers"
-	"github.com/go-api/internal/platform/db"
+	"fmt"
+
+	"github.com/jdelobel/go-api/cmd/apid/handlers"
+	"github.com/jdelobel/go-api/config"
+	"github.com/jdelobel/go-api/internal/platform/db"
+	"github.com/jdelobel/go-api/internal/platform/rabbitmq"
+	"github.com/jdelobel/go-api/logger"
 )
 
 // init is called before main. We are using init to customize logging output.
 func init() {
-	log.SetFlags(logLstdFlags | log.Lmicroseconds | log.Lshortfile)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }
 
 // main is the entry point for the application.
 func main() {
 	log.Println("main : Started")
 
-	// Check the environment for a configured port value.
-	dbHost := os.Getenv("DB_HOST")
-	if dbHost == "" {
-		dbHost = "postgres://images:images@127.0.0.1:54321/images?sslmode=disable"
+	var c = config.Config{}
+	err := c.Load("config/config.json")
+	if err != nil {
+		log.Fatalf("main: Failed to init config: %v", err)
 	}
+	loggerConf := logger.Conf{Host: c.Logger.Host,
+		Port:    c.Logger.Port,
+		Level:   c.Logger.Level,
+		App:     c.AppName,
+		Version: c.AppVersion}
+	if err = logger.Init(loggerConf); err != nil {
+		log.Fatalf("main: Failed to init logger: %v", err)
+	}
+	dbHost := fmt.Sprintf("%s://%s:%s@%s:%s/%s?sslmode=disable",
+		c.Database.Client,
+		c.Database.User,
+		c.Database.Password,
+		c.Database.Host,
+		c.Database.Port,
+		c.Database.Name)
 
 	// Register the Master Session for the database.
 	log.Println("main : Started : Capturing Master DB...")
@@ -35,18 +55,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("startup : Register DB : %v", err)
 	}
-	defer masterDB.PSQLClose()
 
-	// Check the environment for a configured port value.
-	host := os.Getenv("HOST")
-	if host == "" {
-		host = ":3000"
+	rbmqHost := fmt.Sprintf("amqp://%s:%s@%s:%s/%s",
+		c.RabbitMQ.User,
+		c.RabbitMQ.Password,
+		c.RabbitMQ.Host,
+		c.RabbitMQ.Port,
+		c.RabbitMQ.Name)
+	defaultQueue := "go-api-messages"
+	fmt.Println(rbmqHost)
+	rbmq, err := rabbitmq.NewRabbitMQ(rbmqHost, &defaultQueue)
+
+	if err != nil {
+		log.Fatalf("startup : Register RabitMQ : %v", err)
 	}
-
+	host := fmt.Sprintf("%s:%s", c.AppHost, c.AppPort)
 	// Create a new server and set timeout values.
 	server := http.Server{
 		Addr:           host,
-		Handler:        handlers.API(masterDB),
+		Handler:        handlers.API(masterDB, logger.Log, c, rbmq),
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20,
@@ -58,8 +85,8 @@ func main() {
 
 	// Start the listener.
 	go func() {
-		log.Printf("startup : Listening %s", host)
-		log.Printf("shutdown : Listener closed : %v", server.ListenAndServe())
+		logger.Log.Infof("startup : Listening %s", host)
+		logger.Log.Infof("shutdown : Listener closed : %v", server.ListenAndServe())
 		wg.Done()
 	}()
 
@@ -78,15 +105,18 @@ func main() {
 	// Attempt the graceful shutdown by closing the listener and
 	// completing all inflight requests.
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("shutdown : Graceful shutdown did not complete in %v : %v", timeout, err)
+		logger.Log.Infof("shutdown : Graceful shutdown did not complete in %v : %v", timeout, err)
 
 		// Looks like we timedout on the graceful shutdown. Kill it hard.
 		if err := server.Close(); err != nil {
-			log.Printf("shutdown : Error killing server : %v", err)
+			logger.Log.Infof("shutdown : Error killing server : %v", err)
 		}
+	}
+	if err := masterDB.PSQLClose(); err != nil {
+		logger.Log.Errorf("main : Database instance not closed : %v", err)
 	}
 
 	// Wait for the listener to report it is closed.
 	wg.Wait()
-	log.Println("main : Completed")
+	logger.Log.Info("main : Completed")
 }

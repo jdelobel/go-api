@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"log"
+
 	"net/http"
 	"time"
 
-	"github.com/go-api/internal/platform/web"
+	"github.com/jdelobel/go-api/internal/platform/web"
 )
 
 // RequestLogger writes some information about the request to the logs in
@@ -16,10 +16,11 @@ func RequestLogger(next web.Handler) web.Handler {
 	// Wrap this handler around the next one provided.
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, params map[string]string) error {
 		v := ctx.Value(web.KeyValues).(*web.Values)
+		if err := next(ctx, w, r, params); err != nil {
+			v.Log.Errorf("RequestLogger: middleware next failed: %v", err)
+		}
 
-		next(ctx, w, r, params)
-
-		log.Printf("%s : (%d) : %s %s -> %s (%s)",
+		v.Log.Infof("%s : (%d) : %s %s -> %s (%s)",
 			v.TraceID,
 			v.StatusCode,
 			r.Method, r.URL.Path,

@@ -2,114 +2,89 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"log"
 	"net/url"
 	"regexp"
 	"strings"
 
-	"database/sql"
+	"github.com/jmoiron/sqlx"
+	"github.com/pkg/errors"
 
-	"fmt"
 	// postgres driver
 	_ "github.com/lib/pq"
-	"github.com/pkg/errors"
 )
 
 // ErrInvalidDBProvided is returned in the event that an uninitialized db is
 // used to perform actions against.
 var ErrInvalidDBProvided = errors.New("invalid DB provided")
 
-// MasterDB uggly global postgress conf
-var MasterDB DB
-
 // DB is a collection of support for different DB technologies. Currently
-// only MongoDB has been implemented. We want to be able to access the raw
+// only Postgres has been implemented. We want to be able to access the raw
 // database support for the given DB so an interface does not work. Each
 // database is too different.
 type DB struct {
 
 	// Postgres Support.
-	database *sql.DB
+	database *sqlx.DB
 }
 
-// NewPSQL returns a new DB value for use with Postgresql based on a registered
-// master session.
+// NewPSQL returns a new DB value for use with Postgresql
 func NewPSQL(driver string, url string) (*DB, error) {
-	ses, err := newPSQL(driver, url)
+	db, err := newPSQL(driver, url)
 	if err != nil {
-		return nil, errors.Wrapf(err, "NewPSQL: %s,%s", driver, url)
+		return nil, errors.Wrapf(err, "NewPSQL: driver [%s]", driver)
 	}
 
-	db := DB{
-		database: ses,
-	}
-
-	MasterDB = db
-
-	return &db, nil
+	return &DB{database: db}, nil
 }
 
 // PSQLClose closes a DB value being used with Postgresql.
-func (db *DB) PSQLClose() {
-	db.database.Close()
+func (db *DB) PSQLClose() error {
+	if err := db.database.Close(); err != nil {
+		return errors.Wrapf(err, "PSQLClose: %v", err)
+	}
+	return nil
 }
 
-// PSQLExecute is used to execute MongoDB commands.
+// PSQLExecute is used to execute Postgres commands.
 func (db *DB) PSQLExecute(ctx context.Context, query string, params ...interface{}) (sql.Result, error) {
 	if db == nil {
 		return nil, errors.Wrap(ErrInvalidDBProvided, "db == nil")
 	}
-	if len(params) == 0 {
-		return db.database.Exec(query)
-	}
 	return db.database.Exec(query, params...)
 }
 
-// PSQLQuerier is used to execute MongoDB commands.
-func (db *DB) PSQLQuerier(ctx context.Context, query string, params ...interface{}) (*sql.Rows, error) {
+// PSQLQuerier is used to execute Postgres commands.
+func (db *DB) PSQLQuerier(ctx context.Context, query string, params ...interface{}) (*sqlx.Rows, error) {
 	if db == nil {
 		return nil, errors.Wrap(ErrInvalidDBProvided, "db == nil")
 	}
-	if len(params) == 0 {
-		return db.database.Query(query)
-	}
-	return db.database.Query(query, params...)
+	return db.database.Queryx(query, params...)
 }
 
-// Query process queries
-func (db *DB) Query(SQL string, params ...interface{}) (jsonData []byte, err error) {
+// PSQLQueryRawx is used to execute retrive one raw. Can be used to get raw by its id
+func (db *DB) PSQLQueryRawx(ctx context.Context, query string, params ...interface{}) (*sqlx.Row, error) {
 	if db == nil {
 		return nil, errors.Wrap(ErrInvalidDBProvided, "db == nil")
 	}
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	SQL = fmt.Sprintf("SELECT json_agg(s) FROM (%s) s", SQL)
-
-	prepare, err := db.database.Prepare(SQL)
-	if err != nil {
-		return
-	}
-	defer prepare.Close()
-
-	err = prepare.QueryRow(params...).Scan(&jsonData)
-
-	return
+	return db.database.QueryRowx(query, params...), nil
 }
 
 // newPSQL creates a new postgres connection.
-func newPSQL(driver string, url string) (*sql.DB, error) {
+func newPSQL(driver string, url string) (*sqlx.DB, error) {
 
 	// Create a session which maintains a pool of socket connections
-	// to our MongoDB.
-	ses, err := sql.Open(driver, url)
+	// to our Postgresql.
+	db, err := sqlx.Open(driver, url)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Cannot connect to database: %s", url)
+		return nil, errors.Wrapf(err, "Cannot connect to database %s", url)
 	}
-	return ses, nil
+
+	if err = db.Ping(); err != nil {
+		return nil, errors.Wrapf(err, "Cannot ping database %s", url)
+	}
+	return db, nil
 }
 
 // Query provides a string version of the value
@@ -122,12 +97,21 @@ func Query(value interface{}) string {
 	return string(json)
 }
 
-// GetQueryOperator identify operator on a join
+// Ping checks the connection availability
+func (db *DB) Ping() error {
+	if db == nil {
+		return errors.Wrap(ErrInvalidDBProvided, "db == nil")
+	}
+	if err := db.database.Ping(); err != nil {
+		return errors.Wrap(err, "Failed to ping database")
+	}
+	return nil
+}
+
+// GetQueryOperator identifies operator on a join
 func getQueryOperator(op string) (string, error) {
-	fmt.Println("getQueryOperator", op)
 	op = strings.Replace(op, "$", "", -1)
 	op = strings.Replace(op, " ", "", -1)
-	fmt.Println("getQueryOperator after", op)
 
 	switch op {
 	case "eq":
@@ -151,25 +135,20 @@ func getQueryOperator(op string) (string, error) {
 	case "null":
 		return "IS NULL", nil
 	}
-
-	err := errors.New("Invalid operator")
-	return "", err
-
+	return "", errors.New("Invalid operator")
 }
 
-// BuildWhere build where statement
-func (db *DB) BuildWhere(queryParams url.Values) string {
+// BuildWhere builds WHERE statement
+func (db *DB) BuildWhere(queryParams url.Values) (string, error) {
 	removeOperatorRegex := regexp.MustCompile(`\$[a-z]+.`)
 	sqlWhere := " WHERE "
 	result := ""
 	i := 0
 	for k, v := range queryParams {
-		fmt.Println(k, v)
 		value := removeOperatorRegex.ReplaceAllString(v[0], "")
 		op, err := getQueryOperator(strings.Split(v[0], ".")[0])
 		if err != nil {
-			fmt.Println("Error", err)
-			break
+			return "", errors.Wrap(err, "BuildWhere")
 		}
 		if i == 0 {
 			result = k + " " + op + "'" + value + "'"
@@ -179,6 +158,6 @@ func (db *DB) BuildWhere(queryParams url.Values) string {
 		i++
 	}
 	sqlWhere += result
-	return sqlWhere
+	return sqlWhere, nil
 
 }

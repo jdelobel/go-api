@@ -1,0 +1,21 @@
+postgres1:
+  image: "postgres"
+  container_name: "go-api-postgres"
+  environment:
+    POSTGRES_USER: "go-api-postgres"
+    POSTGRES_PASSWORD: "go-api-postgres"
+    POSTGRES_USER: "go-api-postgres"
+  ports:
+    - "5432:5432"
+
+rabbitmq1:
+  image: "rabbitmq:3-management"
+  container_name: "go-api-rabbitmq"
+  environment:
+    RABBITMQ_ERLANG_COOKIE: "SWQOKODSQALRPCLNMEQG"
+    RABBITMQ_DEFAULT_USER: "go-api-rabbitmq"
+    RABBITMQ_DEFAULT_PASS: "go-api-rabbitmq"
+    RABBITMQ_DEFAULT_VHOST: "go-api-rabbitmq"
+  ports:
+    - "15672:15672"
+    - "5672:5672"

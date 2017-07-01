@@ -127,5 +127,7 @@ func Respond(ctx context.Context, w http.ResponseWriter, data interface{}, code 
 	}
 
 	// Send the result back to the client.
-	io.WriteString(w, string(jsonData))
+	if _, err := io.WriteString(w, string(jsonData)); err != nil {
+		log.Printf("%s : Respond %v WriteString JSON response\n", v.TraceID, err)
+	}
 }

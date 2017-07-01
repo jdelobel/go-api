@@ -1,0 +1,13 @@
+{
+  "appVersion": "1.0.0",
+  "database": {
+    "name": "go-api-postgres",
+    "user": "go-api-postgres",
+    "password": "go-api-postgres"
+  },
+  "rabbitmq": {
+    "name": "go-api-rabbitmq",
+    "user": "go-api-rabbitmq",
+    "password": "go-api-rabbitmq"
+  }
+}

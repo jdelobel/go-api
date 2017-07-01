@@ -9,13 +9,15 @@ import (
 	"os"
 	"testing"
 
-	"github.com/go-api/cmd/apid/handlers"
-	"github.com/go-api/internal/media"
-	"github.com/go-api/internal/platform/db"
-	"github.com/go-api/internal/platform/web"
+	"github.com/jdelobel/go-api/cmd/apid/handlers"
+	"github.com/jdelobel/go-api/internal/image"
+	"github.com/jdelobel/go-api/internal/platform/db"
+	"github.com/jdelobel/go-api/internal/platform/web"
+	"github.com/jdelobel/go-api/logger"
 
 	"strings"
 
+	"github.com/jdelobel/go-api/config"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -32,7 +34,10 @@ var a *web.App
 
 // init is called before main. We are using init to customize logging output.
 func init() {
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
+	err := logger.Init(logger.Conf{Level: "EMERGENCY", App: "go-api-testing"})
+	if err != nil {
+		log.Fatalf("main: Failed to init config: %v", err)
+	}
 }
 
 // TestMain gives you a chance to setup / tear down before tests in this package.
@@ -47,41 +52,39 @@ func runTest(m *testing.M) int {
 	// Check the environment for a configured port value.
 	dbHost := os.Getenv("DB_HOST")
 	if dbHost == "" {
-		dbHost = "postgres://images:images@127.0.0.1:54321/images?sslmode=disable"
+		dbHost = "postgres://go-api-postgres:go-api-postgres@localhost:5432/go-api-postgres?sslmode=disable"
 	}
 
 	// Register the Master Session for the database.
-	log.Println("main : Started : Capturing Master DB...")
 	masterDB, err := db.NewPSQL("postgres", dbHost)
+	c := config.Config{}
 	if err != nil {
 		return 1
 	}
-
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
-	a = handlers.API(masterDB).(*web.App)
+	a = handlers.API(masterDB, logger.Log, c, nil).(*web.App)
 
 	return m.Run()
 }
 
-// TestMedias is the entry point for the medias
-func TestMedias(t *testing.T) {
-	t.Run("getMedias200Empty", getMedias200Empty)
-	t.Run("postMedia400", postMedia400)
-	t.Run("getMedia404", getMedia404)
-	t.Run("getMedia400", getMedia400)
-	t.Run("putMedia404", putMedia404)
-	t.Run("crudMedias", crudMedia)
+// TestImages is the entry point for the images
+func TestImages(t *testing.T) {
+	t.Run("getImages200Empty", getImages200Empty)
+	t.Run("postImage400", postImage400)
+	t.Run("getImage404", getImage404)
+	t.Run("getImage400", getImage400)
+	t.Run("putImage404", putImage404)
+	t.Run("crudImages", crudImage)
 }
 
-// getMedias200Empty validates an empty medias list can be retrieved with the endpoint.
-func getMedias200Empty(t *testing.T) {
-	r := httptest.NewRequest("GET", "/v1/medias", nil)
+// getImages200Empty validates an empty images list can be retrieved with the endpoint.
+func getImages200Empty(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/images", nil)
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to fetch an empty list of medias with the medias endpoint.")
+	t.Log("Given the need to fetch an empty list of images with the images endpoint.")
 	{
-		t.Log("\tTest 0:\tWhen fetching an empty media list.")
+		t.Log("\tTest 0:\tWhen fetching an empty image list.")
 		{
 			if w.Code != http.StatusOK {
 				t.Fatalf("\t%s\tShould receive a status code of 200 for the response : %v", Failed, w.Code)
@@ -100,25 +103,24 @@ func getMedias200Empty(t *testing.T) {
 	}
 }
 
-// postMedia400 validates a media can't be created with the endpoint
-// unless a valid media document is submitted.
-func postMedia400(t *testing.T) {
-	m := media.CreateMedia{
-		ID:        "47c658e0-68d7-4d79-9f9f-25ece8a1fb03",
-		Title:     "Media Elijah Baley",
-		URL:       "/images/1280/720/test-2260-b1396d-1@1x.jpeg",
-		Slug:      "/images/1280/720/test-2260-b1396d-1@1x",
-		Publisher: "etf1",
+// postImage400 validates an image can't be created with the endpoint
+// unless a valid image document is submitted.
+func postImage400(t *testing.T) {
+	m := image.CreateImage{
+		ID:    "47c658e0-68d7-4d79-9f9f-25ece8a1fb03",
+		Title: "Image Elijah Baley",
+		URL:   "/images/1280/720/test-2260-b1396d-1@1x.jpeg",
+		Slug:  "/images/1280/720/test-2260-b1396d-1@1x",
 	}
 
 	body, _ := json.Marshal(&m)
-	r := httptest.NewRequest("POST", "/v1/medias", bytes.NewBuffer(body))
+	r := httptest.NewRequest("POST", "/v1/images", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to validate a new media can't be created with an invalid document.")
+	t.Log("Given the need to validate a new image can't be created without publisher")
 	{
-		t.Log("\tTest 0:\tWhen using an incomplete media value.")
+		t.Log("\tTest 0:\tWhen using an incomplete image value.")
 		{
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("\t%s\tShould receive a status code of 400 for the response : %v", Failed, w.Code)
@@ -131,24 +133,7 @@ func postMedia400(t *testing.T) {
   "error": "field validation failure",
   "fields": [
     {
-      "field_name": "Addresses",
-      "error": "required"
-    },
-    {
-      "field_name": "FirstName",
-      "error": "required"
-    }
-  ]
-}`,
-				`{
-  "error": "field validation failure",
-  "fields": [
-    {
-      "field_name": "FirstName",
-      "error": "required"
-    },
-    {
-      "field_name": "Addresses",
+      "field_name": "Publisher",
       "error": "required"
     }
   ]
@@ -166,7 +151,6 @@ func postMedia400(t *testing.T) {
 			if !found {
 				t.Log("Got :", recv)
 				t.Log("Want:", resps[0])
-				t.Log("Want:", resps[1])
 				t.Fatalf("\t%s\tShould get the expected result.", Failed)
 			}
 			t.Logf("\t%s\tShould get the expected result.", Succeed)
@@ -174,17 +158,17 @@ func postMedia400(t *testing.T) {
 	}
 }
 
-// getMedia400 validates a media request for a malformed mediaid.
-func getMedia400(t *testing.T) {
-	mediaID := "12345"
+// getImage400 validates an image request for a malformed imageid.
+func getImage400(t *testing.T) {
+	imageID := "12345"
 
-	r := httptest.NewRequest("GET", "/v1/medias/"+mediaID, nil)
+	r := httptest.NewRequest("GET", "/v1/images/"+imageID, nil)
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to validate getting a media with a malformed mediaid.")
+	t.Log("Given the need to validate getting an image with a malformed imageid.")
 	{
-		t.Logf("\tTest 0:\tWhen using the new media %s.", mediaID)
+		t.Logf("\tTest 0:\tWhen using the new image %s.", imageID)
 		{
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("\t%s\tShould receive a status code of 400 for the response : %v", Failed, w.Code)
@@ -205,17 +189,17 @@ func getMedia400(t *testing.T) {
 	}
 }
 
-// getMedia404 validates a media request for a media that does not exist with the endpoint.
-func getMedia404(t *testing.T) {
-	mediaID := bson.NewObjectId().Hex()
+// getImage404 validates an image request for an image that does not exist with the endpoint.
+func getImage404(t *testing.T) {
+	imageID := bson.NewObjectId().Hex()
 
-	r := httptest.NewRequest("GET", "/v1/medias/"+mediaID, nil)
+	r := httptest.NewRequest("GET", "/v1/images/"+imageID, nil)
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to validate getting a media with an unknown id.")
+	t.Log("Given the need to validate getting an image with an unknown id.")
 	{
-		t.Logf("\tTest 0:\tWhen using the new media %s.", mediaID)
+		t.Logf("\tTest 0:\tWhen using the new image %s.", imageID)
 		{
 			if w.Code != http.StatusNotFound {
 				t.Fatalf("\t%s\tShould receive a status code of 404 for the response : %v", Failed, w.Code)
@@ -234,26 +218,26 @@ func getMedia404(t *testing.T) {
 	}
 }
 
-// putMedia404 validates updating a media that does not exist.
-func putMedia404(t *testing.T) {
-	m := media.CreateMedia{
+// putImage404 validates updating an image that does not exist.
+func putImage404(t *testing.T) {
+	m := image.CreateImage{
 		ID:        "47c658e0-68d7-4d79-9f9f-25ece8a1fb03",
-		Title:     "Media Elijah Baley",
+		Title:     "Image Elijah Baley",
 		URL:       "/images/1280/720/test-2260-b1396d-1@1x.jpeg",
 		Slug:      "/images/1280/720/test-2260-b1396d-1@1x",
 		Publisher: "etf1",
 	}
 
-	mediaID := bson.NewObjectId().Hex()
+	imageID := bson.NewObjectId().Hex()
 
 	body, _ := json.Marshal(&m)
-	r := httptest.NewRequest("PUT", "/v1/medias/"+mediaID, bytes.NewBuffer(body))
+	r := httptest.NewRequest("PUT", "/v1/images/"+imageID, bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to validate updating a media that does not exist.")
+	t.Log("Given the need to validate updating an image that does not exist.")
 	{
-		t.Logf("\tTest 0:\tWhen using the new media %s.", mediaID)
+		t.Logf("\tTest 0:\tWhen using the new image %s.", imageID)
 		{
 			if w.Code != http.StatusNotFound {
 				t.Fatalf("\t%s\tShould receive a status code of 404 for the response : %v", Failed, w.Code)
@@ -272,50 +256,50 @@ func putMedia404(t *testing.T) {
 	}
 }
 
-// crudMedia performs a complete test of CRUD against the api.
-func crudMedia(t *testing.T) {
-	nm := postMedia201(t)
-	defer deleteMedia204(t, nm.ID)
+// crudImage performs a complete test of CRUD against the api.
+func crudImage(t *testing.T) {
+	nm := postImage201(t)
+	defer deleteImage204(t, nm.ID)
 
-	getMedia200(t, nm.ID)
-	putMedia204(t, nm)
+	getImage200(t, nm.ID)
+	putImage204(t, nm)
 }
 
-// postMedia201 validates a media can be created with the endpoint.
-func postMedia201(t *testing.T) media.CreateMedia {
-	m := media.CreateMedia{
+// postImage201 validates an image can be created with the endpoint.
+func postImage201(t *testing.T) image.CreateImage {
+	m := image.CreateImage{
 		ID:        "47c658e0-68d7-4d79-9f9f-25ece8a1fb03",
-		Title:     "Media Elijah Baley",
+		Title:     "Image Elijah Baley",
 		URL:       "/images/1280/720/test-2260-b1396d-1@1x.jpeg",
 		Slug:      "/images/1280/720/test-2260-b1396d-1@1x",
 		Publisher: "etf1",
 	}
 
-	var newMedia media.CreateMedia
+	var newImage image.CreateImage
 
 	body, _ := json.Marshal(&m)
-	r := httptest.NewRequest("POST", "/v1/medias", bytes.NewBuffer(body))
+	r := httptest.NewRequest("POST", "/v1/images", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to create a new media with the medias endpoint.")
+	t.Log("Given the need to create a new image with the images endpoint.")
 	{
-		t.Log("\tTest 0:\tWhen using the declared media value.")
+		t.Log("\tTest 0:\tWhen using the declared image value.")
 		{
 			if w.Code != http.StatusCreated {
 				t.Fatalf("\t%s\tShould receive a status code of 201 for the response : %v", Failed, w.Code)
 			}
 			t.Logf("\t%s\tShould receive a status code of 201 for the response.", Succeed)
 
-			var u media.Media
+			var u image.Image
 			if err := json.NewDecoder(w.Body).Decode(&u); err != nil {
 				t.Fatalf("\t%s\tShould be able to unmarshal the response : %v", Failed, err)
 			}
 
-			newMedia = m
+			newImage = m
 
 			m.ID = "47c658e0-68d7-4d79-9f9f-25ece8a1fb04"
-			m.Title = "Media Elijah Baley11"
+			m.Title = "Image Elijah Baley11"
 			m.URL = "/images/1280/720/test-3360-b1396d-1@1x.jpeg"
 			m.Slug = "/images/1280/720/test-3360-b1396d-1@1x"
 			m.Publisher = "etf1"
@@ -327,8 +311,8 @@ func postMedia201(t *testing.T) media.CreateMedia {
 
 			recv := string(doc)
 			resp := `{
-    "media_id": "47c658e0-68d7-4d79-9f9f-25ece8a1fb03",
-    "title": "Media Elijah Baley",
+    "id": "47c658e0-68d7-4d79-9f9f-25ece8a1fb03",
+    "title": "Image Elijah Baley",
     "url": "/images/1280/720/test-2260-b1396d-1@1x.jpeg",
     "slug": "/images/1280/720/test-2260-b1396d-1@1x",
     "publisher": "etf1",
@@ -350,18 +334,18 @@ func postMedia201(t *testing.T) media.CreateMedia {
 		}
 	}
 
-	return newMedia
+	return newImage
 }
 
-// deleteMedia204 validates deleting a media that does exist.
-func deleteMedia204(t *testing.T, mediaID string) {
-	r := httptest.NewRequest("DELETE", "/v1/medias/"+mediaID, nil)
+// deleteImage204 validates deleting an image that does exist.
+func deleteImage204(t *testing.T, imageID string) {
+	r := httptest.NewRequest("DELETE", "/v1/images/"+imageID, nil)
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to validate deleting a media that does exist.")
+	t.Log("Given the need to validate deleting an image that does exist.")
 	{
-		t.Logf("\tTest 0:\tWhen using the new media %s.", mediaID)
+		t.Logf("\tTest 0:\tWhen using the new image %s.", imageID)
 		{
 			if w.Code != http.StatusNoContent {
 				t.Fatalf("\t%s\tShould receive a status code of 204 for the response : %v", Failed, w.Code)
@@ -371,29 +355,29 @@ func deleteMedia204(t *testing.T, mediaID string) {
 	}
 }
 
-// getMedia200 validates a media request for an existing userid.
-func getMedia200(t *testing.T, mediaID string) {
-	r := httptest.NewRequest("GET", "/v1/medias/"+mediaID, nil)
+// getImage200 validates an image request for an existing userid.
+func getImage200(t *testing.T, imageID string) {
+	r := httptest.NewRequest("GET", "/v1/images/"+imageID, nil)
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to validate getting a media that exsits.")
+	t.Log("Given the need to validate getting an image that exsits.")
 	{
-		t.Logf("\tTest 0:\tWhen using the new media %s.", mediaID)
+		t.Logf("\tTest 0:\tWhen using the new image %s.", imageID)
 		{
 			if w.Code != http.StatusOK {
 				t.Fatalf("\t%s\tShould receive a status code of 200 for the response : %v", Failed, w.Code)
 			}
 			t.Logf("\t%s\tShould receive a status code of 200 for the response.", Succeed)
 
-			var u media.Media
+			var u image.Image
 			if err := json.NewDecoder(w.Body).Decode(&u); err != nil {
 				t.Fatalf("\t%s\tShould be able to unmarshal the response : %v", Failed, err)
 			}
 
-			m := media.Media{}
+			m := image.Image{}
 			*m.ID = "47c658e0-68d7-4d79-9f9f-25ece8a1fb03"
-			*m.Title = "Media Elijah Baley"
+			*m.Title = "Image Elijah Baley"
 			*m.URL = "/images/1280/720/test-2260-b1396d-1@1x.jpeg"
 			*m.Slug = "/images/1280/720/test-2260-b1396d-1@1x"
 			*m.Publisher = "etf1"
@@ -416,26 +400,26 @@ func getMedia200(t *testing.T, mediaID string) {
 	}
 }
 
-// putMedia204 validates updating a media that does exist.
-func putMedia204(t *testing.T, m media.CreateMedia) {
-	m.Title = "Media Elijah Baley"
+// putImage204 validates updating an image that does exist.
+func putImage204(t *testing.T, m image.CreateImage) {
+	m.Title = "Image Elijah Baley"
 	m.URL = "/images/1280/720/test-2260-b1396d-1@1x.jpeg"
 
 	body, _ := json.Marshal(&m)
-	r := httptest.NewRequest("PUT", "/v1/medias/"+m.ID, bytes.NewBuffer(body))
+	r := httptest.NewRequest("PUT", "/v1/images/"+m.ID, bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 	a.ServeHTTP(w, r)
 
-	t.Log("Given the need to update a media with the medias endpoint.")
+	t.Log("Given the need to update an image with the images endpoint.")
 	{
-		t.Log("\tTest 0:\tWhen using the modified media value.")
+		t.Log("\tTest 0:\tWhen using the modified image value.")
 		{
 			if w.Code != http.StatusNoContent {
 				t.Fatalf("\t%s\tShould receive a status code of 204 for the response : %v", Failed, w.Code)
 			}
 			t.Logf("\t%s\tShould receive a status code of 204 for the response.", Succeed)
 
-			r = httptest.NewRequest("GET", "/v1/medias/"+m.ID, nil)
+			r = httptest.NewRequest("GET", "/v1/images/"+m.ID, nil)
 			w = httptest.NewRecorder()
 			a.ServeHTTP(w, r)
 
@@ -444,12 +428,12 @@ func putMedia204(t *testing.T, m media.CreateMedia) {
 			}
 			t.Logf("\t%s\tShould receive a status code of 200 for the retrieve.", Succeed)
 
-			var ru media.Media
+			var ru image.Image
 			if err := json.NewDecoder(w.Body).Decode(&ru); err != nil {
 				t.Fatalf("\t%s\tShould be able to unmarshal the response : %v", Failed, err)
 			}
 
-			m.Title = "Media Elijah Baley"
+			m.Title = "Image Elijah Baley"
 			m.URL = "/images/1280/720/test-2260-b1396d-1@1x.jpeg"
 
 			doc, err := json.Marshal(&m)
