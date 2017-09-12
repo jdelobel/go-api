@@ -24,16 +24,15 @@ var ErrInvalidDBProvided = errors.New("invalid DB provided")
 // database support for the given DB so an interface does not work. Each
 // database is too different.
 type DB struct {
-
 	// Postgres Support.
 	database *sqlx.DB
 }
 
 // NewPSQL returns a new DB value for use with Postgresql
-func NewPSQL(driver string, url string) (*DB, error) {
-	db, err := newPSQL(driver, url)
+func NewPSQL(url string) (*DB, error) {
+	db, err := newPSQL(url)
 	if err != nil {
-		return nil, errors.Wrapf(err, "NewPSQL: driver [%s]", driver)
+		return nil, errors.Wrap(err, "NewPSQL")
 	}
 
 	return &DB{database: db}, nil
@@ -72,11 +71,11 @@ func (db *DB) PSQLQueryRawx(ctx context.Context, query string, params ...interfa
 }
 
 // newPSQL creates a new postgres connection.
-func newPSQL(driver string, url string) (*sqlx.DB, error) {
+func newPSQL(url string) (*sqlx.DB, error) {
 
 	// Create a session which maintains a pool of socket connections
 	// to our Postgresql.
-	db, err := sqlx.Open(driver, url)
+	db, err := sqlx.Open("postgres", url)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Cannot connect to database %s", url)
 	}

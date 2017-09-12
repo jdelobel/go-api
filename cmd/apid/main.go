@@ -51,7 +51,7 @@ func main() {
 	// Register the Master Session for the database.
 	log.Println("main : Started : Capturing Master DB...")
 
-	masterDB, err := db.NewPSQL("postgres", dbHost)
+	masterDB, err := db.NewPSQL(dbHost)
 	if err != nil {
 		log.Fatalf("startup : Register DB : %v", err)
 	}

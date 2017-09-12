@@ -33,7 +33,7 @@ func TestImages(t *testing.T) {
 
 	// Register the Master Session for the database.
 	log.Println("main : Started : Capturing Master DB...")
-	masterDB, err := db.NewPSQL("postgres", dbHost)
+	masterDB, err := db.NewPSQL(dbHost)
 	if err != nil {
 		t.Fatal(err)
 	}
